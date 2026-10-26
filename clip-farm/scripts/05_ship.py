@@ -3,14 +3,32 @@
 Usage: ship.py --clip <workdir>/clips/clip01.mp4 --account <fbid|username> --caption "..."
 Extracts a cover frame, then publishes via instagram-cli post-feed.
 """
-import argparse, os, subprocess, sys, tempfile
+import argparse, hashlib, json, os, subprocess, sys, tempfile
+
+def validate_approval(clip, account, caption, approval_path):
+    """Bind human approval to exact media bytes, account, and caption."""
+    with open(approval_path, encoding="utf-8") as source:
+        approval = json.load(source)
+    with open(clip, "rb") as source:
+        digest = hashlib.sha256(source.read()).hexdigest()
+    expected = {"clip_sha256": digest, "account": account, "caption": caption}
+    if approval.get("approved") is not True or not str(approval.get("approved_by", "")).strip():
+        raise ValueError("Named human approval is required.")
+    if any(approval.get(key) != value for key, value in expected.items()):
+        raise ValueError("Approval does not match the exact clip, account, and caption.")
+
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--clip", required=True)
     ap.add_argument("--account", required=True)
     ap.add_argument("--caption", default="")
+    ap.add_argument("--approval", required=True, help="Human-reviewed JSON receipt bound to this clip, account, and caption")
     a = ap.parse_args()
+    try:
+        validate_approval(a.clip, a.account, a.caption, a.approval)
+    except (OSError, ValueError) as exc:
+        sys.exit(f"Publishing blocked: {exc}")
     cover = os.path.join(tempfile.gettempdir(), "clip-cover.jpg")
     r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", "1",
                         "-i", a.clip, "-frames:v", "1", cover])
